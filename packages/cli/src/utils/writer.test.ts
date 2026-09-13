@@ -1,7 +1,7 @@
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { svgToJsx } from "./writer.ts";
+import { svgToJsx, relativeToCwd } from "./writer.ts";
 
 const cases = [
   { name: "class", in: `<svg class="icon"></svg>`, out: `<svg className="icon"></svg>` },
@@ -31,3 +31,29 @@ for (const { name, in: input, out: expected } of cases) {
     assert.equal(svgToJsx(input), expected);
   });
 }
+
+test("relativeToCwd", async (t) => {
+  t.beforeEach(() => {
+    mock.method(process, 'cwd', () => '/mock/cwd');
+  });
+
+  t.afterEach(() => {
+    mock.restoreAll();
+  });
+
+  await t.test("prepends ./ when path is within cwd", () => {
+    assert.equal(relativeToCwd('/mock/cwd/src/index.ts'), './src/index.ts');
+  });
+
+  await t.test("prepends ./ when path is absolute but outside cwd", () => {
+    assert.equal(relativeToCwd('/some/other/path/file.ts'), './some/other/path/file.ts');
+  });
+
+  await t.test("returns empty string if path is exactly cwd", () => {
+    assert.equal(relativeToCwd('/mock/cwd'), '');
+  });
+
+  await t.test("returns path unchanged if it's already relative", () => {
+    assert.equal(relativeToCwd('src/index.ts'), 'src/index.ts');
+  });
+});
