@@ -14,13 +14,10 @@ import {
   Trash2,
 } from "lucide-react";
 import type { IconEntry } from "@/lib/icons";
+import { loadIconsManifest } from "@/lib/icons-manifest";
 import { useRecentsStore } from "@/lib/stores/recents-store";
 import { StatCard } from "./stat-card";
 import { Section } from "./section";
-
-interface Props {
-  allIcons: IconEntry[];
-}
 
 type TimeWindow = "all" | "today" | "week" | "month";
 
@@ -50,7 +47,7 @@ function getWindowCutoff(win: TimeWindow): number | null {
   return Date.now() - def.ms;
 }
 
-export function RecentsPage({ allIcons }: Props) {
+export function RecentsPage() {
   const viewed = useRecentsStore((s) => s.viewed);
   const copied = useRecentsStore((s) => s.copied);
   const searched = useRecentsStore((s) => s.searched);
@@ -64,7 +61,37 @@ export function RecentsPage({ allIcons }: Props) {
   const [win, setWin] = useState<TimeWindow>("all");
   const [flash, setFlash] = useState<string | null>(null);
 
+  // The page renders at most the ~20 slugs held in localStorage, so it fetches
+  // the full manifest lazily (like every other client surface) instead of
+  // shipping all entries down as a prop. Only viewed/copied need slug→entry
+  // resolution; searches don't.
+  const [iconsBySlug, setIconsBySlug] = useState<Map<string, IconEntry>>(
+    () => new Map(),
+  );
+  const [manifestLoaded, setManifestLoaded] = useState(false);
+  const [manifestError, setManifestError] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
+  const hasSlugs = viewed.length > 0 || copied.length > 0;
+
   useEffect(() => setHydrated(true), []);
+
+  useEffect(() => {
+    if (!hasSlugs) return;
+    let active = true;
+    setManifestError(false);
+    loadIconsManifest()
+      .then((manifest) => {
+        if (!active) return;
+        setIconsBySlug(new Map(manifest.map((i) => [i.slug, i])));
+        setManifestLoaded(true);
+      })
+      .catch(() => {
+        if (active) setManifestError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [hasSlugs, reloadToken]);
 
   // Fade copy-confirmation pill.
   useEffect(() => {
@@ -72,11 +99,6 @@ export function RecentsPage({ allIcons }: Props) {
     const t = window.setTimeout(() => setFlash(null), 1400);
     return () => window.clearTimeout(t);
   }, [flash]);
-
-  const iconsBySlug = useMemo(
-    () => new Map(allIcons.map((i) => [i.slug, i])),
-    [allIcons],
-  );
 
   // Computed once per render cycle and shared by the viewed/copied/searched
   // memos below, so the cutoff timestamp itself is never recomputed per list.
@@ -117,7 +139,11 @@ export function RecentsPage({ allIcons }: Props) {
 
   const totalEntries =
     viewedIcons.length + copiedIcons.length + filteredSearches.length;
-  const isEmpty = hydrated && totalEntries === 0;
+  // Still fetching the manifest for stored slugs; hold off the empty state so
+  // it doesn't flash before the icons resolve.
+  const resolving = hasSlugs && !manifestLoaded && !manifestError;
+  const manifestFailed = hydrated && hasSlugs && manifestError;
+  const isEmpty = hydrated && !resolving && !manifestFailed && totalEntries === 0;
 
   const handleCopyAgain = useCallback(
     async (entry: IconEntry, format: "svg" | "url") => {
@@ -224,9 +250,27 @@ export function RecentsPage({ allIcons }: Props) {
         )}
       </header>
 
-      {!hydrated && (
+      {(!hydrated || resolving) && (
         <div className="flex justify-center py-24" role="status" aria-label="Loading your recents">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground" />
+        </div>
+      )}
+
+      {manifestFailed && (
+        <div className="relative overflow-hidden rounded-3xl border border-dashed border-border/60 bg-gradient-to-br from-card/40 to-card/10 px-6 py-20 text-center dark:border-white/[0.08]">
+          <h2 className="text-lg font-semibold text-foreground">
+            Couldn&apos;t load your recent icons
+          </h2>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+            Your viewed and copied history is saved, it just couldn&apos;t be resolved this time.
+          </p>
+          <button
+            type="button"
+            onClick={() => setReloadToken((t) => t + 1)}
+            className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-all hover:scale-[1.02] hover:opacity-90 active:scale-95"
+          >
+            Retry
+          </button>
         </div>
       )}
 

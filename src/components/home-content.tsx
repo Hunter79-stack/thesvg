@@ -138,6 +138,27 @@ export function HomeContent({ categoryCounts, count, recentIcons, collections, d
     [updateUrl, setSidebarOpen]
   );
 
+  // Navigate to the home grid while keeping every other URL-backed filter
+  // (search, sort, favorites, view) intact. Only the route-derived
+  // category/collection segment is dropped, since that's the one filter
+  // being cleared.
+  const navigateHomeKeepingParams = useCallback(() => {
+    const qs = searchParams.toString();
+    router.push(qs ? `/?${qs}` : "/");
+  }, [searchParams, router]);
+
+  // Clear the active category. On /category/[slug] the category comes from the
+  // route segment, not a query param, so editing params can't remove it - the
+  // page must navigate to the home grid. When the category is a query param,
+  // drop it in place and keep the current base path.
+  const handleClearCategory = useCallback(() => {
+    if (defaultCategory) {
+      navigateHomeKeepingParams();
+    } else {
+      updateUrl({ category: null });
+    }
+  }, [defaultCategory, navigateHomeKeepingParams, updateUrl]);
+
   const handleCollectionSelect = useCallback(
     (collection: Collection | null) => {
       setSidebarOpen(false);
@@ -145,10 +166,10 @@ export function HomeContent({ categoryCounts, count, recentIcons, collections, d
       if (collection) {
         router.push(`/collection/${collection}`);
       } else {
-        router.push("/");
+        navigateHomeKeepingParams();
       }
     },
-    [router, setSidebarOpen]
+    [router, setSidebarOpen, navigateHomeKeepingParams]
   );
 
   const handleToggleFavorites = useCallback(() => {
@@ -425,7 +446,7 @@ export function HomeContent({ categoryCounts, count, recentIcons, collections, d
                 {collectionParam && (
                   <button
                     type="button"
-                    onClick={() => updateUrl({ collection: null })}
+                    onClick={() => handleCollectionSelect(null)}
                     className="inline-flex items-center gap-1 rounded-full border border-orange-200/50 bg-orange-50/50 px-2.5 py-0.5 text-xs font-medium text-orange-600 transition-colors hover:bg-orange-50 dark:border-orange-500/20 dark:bg-orange-500/10 dark:text-orange-400"
                   >
                     {collectionParam === "aws" ? "AWS" : collectionParam}
@@ -435,7 +456,7 @@ export function HomeContent({ categoryCounts, count, recentIcons, collections, d
                 {categoryParam && (
                   <button
                     type="button"
-                    onClick={() => updateUrl({ category: null })}
+                    onClick={handleClearCategory}
                     className="inline-flex items-center gap-1 rounded-full border border-border/40 bg-accent/50 px-2.5 py-0.5 text-xs font-medium text-foreground transition-colors hover:bg-accent dark:border-white/[0.06] dark:bg-white/[0.06]"
                   >
                     {categoryParam}
@@ -465,8 +486,12 @@ export function HomeContent({ categoryCounts, count, recentIcons, collections, d
                 <button
                   type="button"
                   onClick={() => {
-                    updateUrl({ collection: null, category: null, favorites: null, q: null, sort: null });
+                    // Route-derived collection/category filters can't be dropped
+                    // by editing params, so navigate to the home grid. Keep the
+                    // view preference, which is a display choice, not a filter.
                     setGlobalQuery("");
+                    const view = searchParams.get("view");
+                    router.push(view ? `/?view=${view}` : "/");
                   }}
                   className="text-[10px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
                 >

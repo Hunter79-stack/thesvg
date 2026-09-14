@@ -5,6 +5,18 @@ const shouldIgnore =
   typeof document !== "undefined" &&
   document.cookie.includes("thesvg_ignore_analytics=true");
 
+// Local development runs against the production PostHog project. Without this
+// guard, anything a developer breaks on their machine (a throw in a dev build,
+// a half-finished component) is captured as if a real user hit it in
+// production, so dev-only crashes pollute error tracking. Skip capture when the
+// app runs on a developer's machine.
+const LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]", "::1"];
+
+const isLocalEnvironment =
+  process.env.NODE_ENV === "development" ||
+  (typeof window !== "undefined" &&
+    LOCAL_HOSTS.includes(window.location.hostname));
+
 const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 
 // Meta in-app browsers (Instagram, Threads, Facebook) inject their own native
@@ -32,7 +44,27 @@ function isInAppBrowserBridgeError(result: CaptureResult): boolean {
   });
 }
 
-if (posthogKey) {
+// The browser raises a "ResizeObserver loop" warning on window.onerror when it
+// cannot finish all resize callbacks in one frame. posthog-js captures it as a
+// synthetic, frameless exception even though nothing in the app threw and the
+// user flow keeps working. One marker covers both the legacy Chrome wording
+// ("loop limit exceeded") and the modern wording ("loop completed with
+// undelivered notifications").
+const RESIZE_OBSERVER_MARKER = "ResizeObserver loop";
+
+function isResizeObserverLoopError(result: CaptureResult): boolean {
+  if (result.event !== "$exception") return false;
+
+  const exceptions = result.properties?.["$exception_list"];
+  if (!Array.isArray(exceptions)) return false;
+
+  return exceptions.some((exception: { value?: unknown }) => {
+    const value = exception?.value;
+    return typeof value === "string" && value.includes(RESIZE_OBSERVER_MARKER);
+  });
+}
+
+if (posthogKey && !isLocalEnvironment) {
   posthog.init(posthogKey, {
     api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.i.posthog.com",
     ui_host: "https://us.posthog.com",
@@ -40,6 +72,7 @@ if (posthogKey) {
     capture_exceptions: !shouldIgnore,
     before_send: (result) => {
       if (result && isInAppBrowserBridgeError(result)) return null;
+      if (result && isResizeObserverLoopError(result)) return null;
       return result;
     },
     debug: process.env.NODE_ENV === "development",
